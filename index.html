@@ -289,7 +289,31 @@
         </header>
 
         <div class="alert alert-warning">
-            <strong>⚠️ Live Market Data Mode:</strong> This bot uses real-time Binance market data with advanced sentiment analysis. The trading signals are based on actual market conditions including price action, volume analysis, RSI, SMA crossovers, and market sentiment scoring from social media trends.
+            <strong>⚠️ Live Market Data Mode:</strong> This bot uses real-time Binance market data with advanced sentiment analysis. To enable actual trading, configure your backend API endpoint below. Never expose API keys in frontend code!
+        </div>
+
+        <!-- API Configuration -->
+        <div class="card" style="margin-bottom: 30px;">
+            <h2>🔐 Backend API Configuration</h2>
+            <div class="form-group">
+                <label for="backendUrl">Backend API URL (Optional - for real trading)</label>
+                <input type="text" id="backendUrl" placeholder="https://your-backend.com/api" value="">
+            </div>
+            <div class="info-row">
+                <span class="info-label">Connection Status</span>
+                <span class="info-value">
+                    <span class="status-indicator status-inactive" id="apiStatusIndicator"></span>
+                    <span id="apiStatus">Not Connected (Demo Mode)</span>
+                </span>
+            </div>
+            <button id="testConnection" style="margin-top: 12px;">Test Connection</button>
+            <div style="margin-top: 16px; padding: 12px; background: var(--color-bg-elevated); border-radius: 8px; font-size: 0.85rem; color: var(--color-text-secondary);">
+                <strong>Setup Instructions:</strong><br>
+                1. Deploy the backend code (Node.js/Python) to a server<br>
+                2. Set your Binance API keys as environment variables<br>
+                3. Enter your backend URL above<br>
+                4. Bot will automatically place real orders when active
+            </div>
         </div>
 
         <div class="grid">
@@ -421,6 +445,8 @@
         let profitLoss = 0;
         let priceHistory = [];
         let interval;
+        let backendConnected = false;
+        let realTradingMode = false;
 
         // DOM elements
         const toggleBtn = document.getElementById('toggleBot');
@@ -432,6 +458,51 @@
         const logContainer = document.getElementById('logContainer');
         const tradeHistoryEl = document.getElementById('tradeHistory');
         const tradingPairEl = document.getElementById('tradingPair');
+        const backendUrlEl = document.getElementById('backendUrl');
+        const testConnectionBtn = document.getElementById('testConnection');
+        const apiStatusEl = document.getElementById('apiStatus');
+        const apiStatusIndicator = document.getElementById('apiStatusIndicator');
+
+        // Test backend connection
+        testConnectionBtn.addEventListener('click', async () => {
+            const backendUrl = backendUrlEl.value.trim();
+            if (!backendUrl) {
+                addLog('⚠️ Please enter a backend URL', 'info');
+                return;
+            }
+
+            testConnectionBtn.disabled = true;
+            testConnectionBtn.textContent = 'Testing...';
+
+            try {
+                const response = await fetch(`${backendUrl}/health`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    backendConnected = true;
+                    realTradingMode = true;
+                    apiStatusEl.textContent = 'Connected - Real Trading Active';
+                    apiStatusIndicator.classList.remove('status-inactive');
+                    apiStatusIndicator.classList.add('status-active');
+                    addLog('✅ Backend connected successfully - Real trading enabled', 'info');
+                } else {
+                    throw new Error('Backend not responding correctly');
+                }
+            } catch (error) {
+                backendConnected = false;
+                realTradingMode = false;
+                apiStatusEl.textContent = 'Connection Failed (Demo Mode)';
+                apiStatusIndicator.classList.remove('status-active');
+                apiStatusIndicator.classList.add('status-inactive');
+                addLog(`❌ Connection failed: ${error.message}`, 'info');
+            }
+
+            testConnectionBtn.disabled = false;
+            testConnectionBtn.textContent = 'Test Connection';
+        });
 
         // Strategy selection
         document.querySelectorAll('.strategy-card').forEach(card => {
@@ -731,9 +802,35 @@
             }
         }
 
-        function buy() {
+        async function buy() {
             const investment = parseFloat(document.getElementById('investment').value);
             const quantity = investment / currentPrice;
+            
+            // Real trading mode - place actual order
+            if (realTradingMode && backendConnected) {
+                try {
+                    const backendUrl = backendUrlEl.value.trim();
+                    const response = await fetch(`${backendUrl}/order`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            symbol: tradingPairEl.value,
+                            side: 'BUY',
+                            quantity: quantity.toFixed(6),
+                            type: 'MARKET'
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Order failed');
+                    }
+
+                    const orderData = await response.json();
+                    addLog(`🔴 REAL ORDER PLACED: BUY ${quantity.toFixed(6)} @ $${currentPrice.toFixed(2)} | Order ID: ${orderData.orderId}`, 'buy');
+                } catch (error) {
+                    addLog(`❌ Real order failed: ${error.message} - Continuing in demo mode`, 'info');
+                }
+            }
             
             position = {
                 buyPrice: currentPrice,
@@ -745,11 +842,38 @@
             positionEl.textContent = `${quantity.toFixed(6)} ${tradingPairEl.value.replace('USDT', '')}`;
             tradesEl.textContent = totalTrades;
             
-            addLog(`BUY: ${quantity.toFixed(6)} @ $${currentPrice.toFixed(2)} (${selectedStrategy.toUpperCase()})`, 'buy');
+            const modeLabel = realTradingMode ? '🔴 REAL' : '🟡 DEMO';
+            addLog(`${modeLabel} BUY: ${quantity.toFixed(6)} @ $${currentPrice.toFixed(2)} (${selectedStrategy.toUpperCase()})`, 'buy');
         }
 
-        function sell() {
+        async function sell() {
             if (!position) return;
+            
+            // Real trading mode - place actual sell order
+            if (realTradingMode && backendConnected) {
+                try {
+                    const backendUrl = backendUrlEl.value.trim();
+                    const response = await fetch(`${backendUrl}/order`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            symbol: tradingPairEl.value,
+                            side: 'SELL',
+                            quantity: position.quantity.toFixed(6),
+                            type: 'MARKET'
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Sell order failed');
+                    }
+
+                    const orderData = await response.json();
+                    addLog(`🔴 REAL ORDER PLACED: SELL ${position.quantity.toFixed(6)} @ $${currentPrice.toFixed(2)} | Order ID: ${orderData.orderId}`, 'sell');
+                } catch (error) {
+                    addLog(`❌ Real sell order failed: ${error.message} - Recording in demo mode`, 'info');
+                }
+            }
             
             const saleValue = position.quantity * currentPrice;
             const profit = saleValue - position.investment;
@@ -763,7 +887,8 @@
             plEl.textContent = `$${profitLoss.toFixed(2)}`;
             plEl.className = `info-value ${profitLoss >= 0 ? 'profit-positive' : 'profit-negative'}`;
             
-            addLog(`SELL: ${position.quantity.toFixed(6)} @ $${currentPrice.toFixed(2)} | P/L: $${profit.toFixed(2)} (${profitPercent}%)`, 'sell');
+            const modeLabel = realTradingMode ? '🔴 REAL' : '🟡 DEMO';
+            addLog(`${modeLabel} SELL: ${position.quantity.toFixed(6)} @ $${currentPrice.toFixed(2)} | P/L: $${profit.toFixed(2)} (${profitPercent}%)`, 'sell');
             addTradeToHistory(position.buyPrice, currentPrice, profit, profitPercent);
             
             position = null;
